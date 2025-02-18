@@ -9,7 +9,7 @@
 ```python
     {
         "id": "088_4075",
-        "wav_file": "/data/jinming/LLM_dys/phn/phn_rep/speaker_088/4075.wav",
+        "wav_file": "path/to/your.wav",
         "transcription": "W IH DH G R G R EY T K EH R"
     },
 ```
