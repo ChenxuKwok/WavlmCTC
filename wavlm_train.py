@@ -10,8 +10,6 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.nn.utils.parametrizations import weight_norm
 import numpy as np
 import sys
-import os
-sys.path.append(os.path.abspath('..'))
 
 
 class PhonemeRecognitionModel(nn.Module):
@@ -74,7 +72,7 @@ def train(model, train_loader, device, epochs=10, lr=1e-4, early_stop_threshold=
         optimizer, 
         mode='min', 
         factor=0.5,    
-        patience=3,      
+        patience=2,      
         verbose=True,    
         min_lr=1e-6      
     )
