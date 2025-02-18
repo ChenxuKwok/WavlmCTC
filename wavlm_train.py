@@ -9,6 +9,10 @@ from torch.optim import Adam
 from torch.nn.utils.rnn import pad_sequence
 from torch.nn.utils.parametrizations import weight_norm
 import numpy as np
+import sys
+import os
+sys.path.append(os.path.abspath('..'))
+
 
 class PhonemeRecognitionModel(nn.Module):
     def __init__(self, base_model, num_classes):
@@ -64,71 +68,88 @@ def train(model, train_loader, device, epochs=10, lr=1e-4, early_stop_threshold=
     model.to(device)
     loss_values = []
 
-    optimizer = Adam(model.parameters(), lr=lr)
-    criterion = nn.CTCLoss(blank=lexicon.index('<unk>'), zero_infinity=True)  # CTC loss with blank index
-    early_stop = False
+    optimizer = Adam(model.parameters(), lr=lr, weight_decay=1e-5)
+    
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, 
+        mode='min', 
+        factor=0.5,    
+        patience=3,      
+        verbose=True,    
+        min_lr=1e-6      
+    )
+    
+    criterion = nn.CTCLoss(blank=lexicon.index('<unk>'), zero_infinity=True)
+    
+    max_grad_norm = 5.0
+    
+    best_loss = float('inf')
+    
     for epoch in range(epochs):
-        # empty cache
-        torch.cuda.empty_cache()
+        epoch_loss = 0.0
+        total_samples = 0
+        early_stop = False
+        
         for i, (audio, labels) in enumerate(train_loader):
             audio = audio.to(device)
-            labels = labels.to(device)  # Directly use the padded tensor
+            labels = labels.to(device)
             
-            # Extract features
             embeddings = model(audio)
-            last_hidden_state = embeddings # Assume output is (B, T, 768)
-            
-            # CTC requires the output to be (B, T, num_classes)
-            # output = last_hidden_state.transpose(0, 1)  # (T, B, 768) --> (T, B, num_classes)
+            last_hidden_state = embeddings
             output = torch.log_softmax(last_hidden_state.transpose(0, 1), dim=2)
-            # print(output.shape)  # Should be (T, B, len(lexicon))
             
-            
-            # Compute CTC loss
-            input_lengths = torch.full(size=(audio.size(0),), fill_value=last_hidden_state.size(1), dtype=torch.long)
-            target_lengths = torch.sum(labels != -1, dim=1)  # Exclude padding (-1) when computing target length
-            
+            input_lengths = torch.full((audio.size(0),), last_hidden_state.size(1), dtype=torch.long, device=device)
+            target_lengths = torch.sum(labels != -1, dim=1)
             loss = criterion(output, labels, input_lengths, target_lengths)
-
+            
             optimizer.zero_grad()
             loss.backward()
+            
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+            
             optimizer.step()
 
-            if i % 10 == 0:
-                print(f"Epoch [{epoch+1}/{epochs}], Step [{i+1}/{len(train_loader)}], Loss: {loss.item()}")
-                loss_values.append(loss.item())
-            
-            # avg loss
-            if i % 100 == 0:
-                avg_loss = sum(loss_values[-100:]) / 100
-                print(f"Average loss: {avg_loss}")
-                if np.abs(avg_loss) < 1e-4:
-                    early_stop = True
-                    break
-            
             current_loss = loss.item()
+            epoch_loss += current_loss * audio.size(0)
+            total_samples += audio.size(0)
+            
+            if i % 10 == 0:
+                avg_loss = epoch_loss / total_samples
+                current_lr = optimizer.param_groups[0]['lr']
+                print(f"Epoch [{epoch+1}/{epochs}], Step [{i+1}/{len(train_loader)}], "
+                      f"Loss: {current_loss:.4f}, Avg Loss: {avg_loss:.4f}, LR: {current_lr:.2e}")
+            
             if current_loss < early_stop_threshold:
                 early_stop = True
                 break
-            
+        
+        avg_epoch_loss = epoch_loss / total_samples
+        loss_values.append(avg_epoch_loss)
+        
+        scheduler.step(avg_epoch_loss)
+        
+        if avg_epoch_loss < best_loss:
+            best_loss = avg_epoch_loss
+            torch.save(model.state_dict(), "best_model.pth")
+            print(f"New best model saved with loss {best_loss:.4f}")
+        
         if early_stop:
+            print(f"Early stopping triggered at epoch {epoch+1}")
             break
-            
-
-    torch.save(model, "wavlm_ctc_model_linear.pth")
-    with open("loss_values.txt", "w") as f:
-        for loss_value in loss_values:
-            f.write(f"{loss_value}\n")
+    
+    torch.save(model.state_dict(), "wavlmctc-pr.pth")
+    print("Training completed. Final model saved.")
 
 # load parameters of training to yaml file
 import yaml
 with open("config.yaml", "r") as f:
     config = yaml.load(f, Loader=yaml.FullLoader)
     lexicon = config["lexicon"]
-    lr = config["lr"]
+    lr = float(config["lr"])
     batch_size = config["batch_size"]
     epochs = config["epochs"]
-
+    
+print("Initial learning rate: ", lr)
 # Load the model
 # model = wavlm_base()
 model = PhonemeRecognitionModel(wavlm_base(), len(lexicon))

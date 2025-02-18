@@ -1,5 +1,5 @@
 batch_size: 32
-epochs: 20
+epochs: 50
 lexicon:
   - <b>
   - AA
@@ -42,4 +42,4 @@ lexicon:
   - Z
   - ZH
   - <unk>
-lr: 0.0001
+lr: 3e-4

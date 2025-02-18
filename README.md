@@ -1,4 +1,4 @@
-# WavlmCTC
+# WavlmCTC for phoneme recognition
 
 ## lexicon
 
